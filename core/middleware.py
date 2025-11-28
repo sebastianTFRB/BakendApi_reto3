@@ -9,7 +9,18 @@ from repositories.user_repository import UserRepository
 
 
 class TokenAuthMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, exclude_paths: tuple[str, ...] = ("/api/auth", "/docs", "/openapi.json", "/health")):
+    def __init__(
+        self,
+        app,
+        exclude_paths: tuple[str, ...] = (
+            "/api/auth",
+            "/api/lead/analyze",
+            "/api/analytics/summary",
+            "/docs",
+            "/openapi.json",
+            "/health",
+        ),
+    ):
         super().__init__(app)
         self.exclude_paths = exclude_paths
 

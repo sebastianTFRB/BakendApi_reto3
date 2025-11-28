@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import agencies, auth, leads, posts, properties
+from api.agente import agente as lead_agent
 from core.config import settings
 from core.middleware import TokenAuthMiddleware
 from db.session import Base, engine
@@ -28,6 +29,7 @@ app.include_router(agencies.router)
 app.include_router(leads.router)
 app.include_router(properties.router)
 app.include_router(posts.router)
+app.include_router(lead_agent.router)
 
 
 @app.get("/health")

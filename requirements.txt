@@ -9,3 +9,7 @@ alembic
 psycopg2-binary==2.9.9
 supabase==2.6.0
 pydantic-settings
+langchain
+langchain-openai
+openai
+python-dotenv

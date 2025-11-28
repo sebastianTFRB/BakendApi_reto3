@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     supabase_url: str = Field("", env="SUPABASE_URL")
     supabase_key: str = Field("", env="SUPABASE_KEY")
     supabase_bucket: str = Field("posts", env="SUPABASE_BUCKET")
+    llm_model: str = Field("gpt-4o-mini", env="LLM_MODEL")
+    llm_temperature: float = Field(0.2, env="LLM_TEMPERATURE")
 
     model_config = SettingsConfigDict(
         env_file=".env",
