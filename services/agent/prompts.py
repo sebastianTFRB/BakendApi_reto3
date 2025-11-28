@@ -5,6 +5,10 @@ Prompt templates for the lead analysis agent.
 BASE_PROMPT = """
 Eres un agente de calificación de leads para inmobiliarias. Lee el mensaje del posible comprador y devuelve SOLO un JSON válido con los campos pedidos.
 
+Si hay historial previo del usuario, úsalo para no repetir preguntas y mantener consistencia en los datos.
+Historial de conversación (puede estar vacío):
+{historial}
+
 Devuelve SIEMPRE este JSON:
 {{
   "presupuesto": <entero o null>,

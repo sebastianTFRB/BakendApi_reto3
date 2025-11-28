@@ -12,6 +12,9 @@ class LeadAnalyzeRequest(BaseModel):
     canal: Optional[str] = Field(None, description="Origen del lead: web, whatsapp, telegram, etc.")
     nombre: Optional[str] = Field(None, description="Nombre de la persona.")
     contacto: Optional[str] = Field(None, description="Datos de contacto: email o whatsapp.")
+    usuario_id: Optional[str] = Field(
+        None, description="Identificador unico (usuario/sesion) para unir historial entre front y WhatsApp."
+    )
 
 
 class LeadAnalyzeResponse(BaseModel):

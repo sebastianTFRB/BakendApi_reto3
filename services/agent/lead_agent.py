@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 from core.config import settings
+from services.agent.history import format_history, history_store
 from services.agent.prompts import BASE_PROMPT
 
 load_dotenv()
@@ -26,6 +27,30 @@ DEFAULT_RESPONSE: Dict[str, Any] = {
     "lead_score": "C",
     "razonamiento": "No se pudo interpretar bien el mensaje",
 }
+
+
+def _build_agent_summary(result: Dict[str, Any]) -> str:
+    return (
+        "Datos detectados -> "
+        f"presupuesto: {result.get('presupuesto') or 'sin dato'}, "
+        f"zona: {result.get('zona') or 'sin dato'}, "
+        f"tipo: {result.get('tipo_propiedad') or 'sin dato'}, "
+        f"urgencia: {result.get('urgencia') or 'sin dato'}, "
+        f"lead_score: {result.get('lead_score') or 'C'}; "
+        f"razonamiento: {result.get('razonamiento') or 'sin razonamiento'}"
+    )
+
+
+def _persist_history(history_key: Optional[str], user_message: str, result: Dict[str, Any]) -> None:
+    if not history_key:
+        return
+    history_store.append(history_key, "user", user_message)
+    history_store.append(history_key, "agent", _build_agent_summary(result))
+
+
+def _build_prompt(message: str, history_key: Optional[str]) -> str:
+    history_text = format_history(history_store.get(history_key))
+    return BASE_PROMPT.replace("{historial}", history_text).replace("{mensaje}", message)
 
 
 def _load_llm() -> Optional[ChatOpenAI]:
@@ -181,22 +206,28 @@ def _normalize_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def analyze_lead_message(message: str) -> Dict[str, Any]:
+def analyze_lead_message(message: str, *, history_key: Optional[str] = None) -> Dict[str, Any]:
     """
     Analyze the lead message using the LLM and normalize the response.
+    Stores a short chat history per usuario to avoid re-asking for data.
     """
     if llm is None:
         fallback = DEFAULT_RESPONSE.copy()
         fallback["razonamiento"] = "LLM no disponible (clave o dependencia faltante)"
+        _persist_history(history_key, message, fallback)
         return fallback
 
-    prompt = BASE_PROMPT.replace("{mensaje}", message)
+    prompt = _build_prompt(message, history_key)
 
     try:
         response = llm.invoke(prompt)
         content = response.content if hasattr(response, "content") else str(response)
     except Exception:
-        return DEFAULT_RESPONSE.copy()
+        fallback = DEFAULT_RESPONSE.copy()
+        _persist_history(history_key, message, fallback)
+        return fallback
 
     parsed = _parse_json_response(content)
-    return _normalize_payload(parsed)
+    normalized = _normalize_payload(parsed)
+    _persist_history(history_key, message, normalized)
+    return normalized
