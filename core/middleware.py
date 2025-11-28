@@ -1,0 +1,41 @@
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from jose import JWTError, jwt
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from core.config import settings
+from db.session import SessionLocal
+from repositories.user_repository import UserRepository
+
+
+class TokenAuthMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, exclude_paths: tuple[str, ...] = ("/api/auth", "/docs", "/openapi.json", "/health")):
+        super().__init__(app)
+        self.exclude_paths = exclude_paths
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if any(path.startswith(prefix) for prefix in self.exclude_paths):
+            return await call_next(request)
+
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.lower().startswith("bearer "):
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+        token = auth_header.split(" ", 1)[1]
+        try:
+            payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+            user_id = payload.get("sub")
+        except JWTError:
+            return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+
+        if not user_id:
+            return JSONResponse(status_code=401, content={"detail": "Invalid token payload"})
+
+        with SessionLocal() as db:
+            user = UserRepository(db).get(int(user_id))
+            if not user or not user.is_active:
+                return JSONResponse(status_code=401, content={"detail": "User not found or inactive"})
+            request.state.user = user
+
+        return await call_next(request)

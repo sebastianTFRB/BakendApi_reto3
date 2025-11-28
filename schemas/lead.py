@@ -1,0 +1,47 @@
+from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, EmailStr, Field
+
+from models.lead import LeadCategory, LeadUrgency
+from schemas.interaction import LeadInteractionRead
+
+
+class LeadBase(BaseModel):
+    full_name: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    preferred_area: Optional[str] = None
+    budget: Optional[float] = None
+    urgency: LeadUrgency = LeadUrgency.medium
+    notes: Optional[str] = None
+    agency_id: Optional[int] = None
+
+
+class LeadCreate(LeadBase):
+    pass
+
+
+class LeadUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    preferred_area: Optional[str] = None
+    budget: Optional[float] = None
+    urgency: Optional[LeadUrgency] = None
+    notes: Optional[str] = None
+    status: Optional[str] = None
+    category: Optional[LeadCategory] = None
+
+
+class LeadRead(LeadBase):
+    id: int
+    intent_score: float
+    category: LeadCategory
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    interactions: List[LeadInteractionRead] = Field(default_factory=list)
+
+    class Config:
+        orm_mode = True

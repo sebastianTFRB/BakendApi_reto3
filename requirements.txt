@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+greenlet==2.0.2
+pydantic
+python-jose[cryptography]
+passlib[bcrypt]
+alembic
+psycopg2-binary==2.9.9
+supabase==2.6.0
