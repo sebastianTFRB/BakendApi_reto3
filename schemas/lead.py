@@ -15,7 +15,7 @@ class LeadBase(BaseModel):
     budget: Optional[float] = None
     urgency: LeadUrgency = LeadUrgency.medium
     notes: Optional[str] = None
-    agency_id: Optional[int] = None
+    post_id: Optional[str] = None
 
 
 class LeadCreate(LeadBase):
@@ -32,10 +32,13 @@ class LeadUpdate(BaseModel):
     notes: Optional[str] = None
     status: Optional[str] = None
     category: Optional[LeadCategory] = None
+    post_id: Optional[str] = None
 
 
 class LeadRead(LeadBase):
     id: int
+    agency_id: Optional[int] = None
+    user_id: Optional[int] = None
     intent_score: float
     category: LeadCategory
     status: str

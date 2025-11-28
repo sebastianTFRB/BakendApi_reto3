@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from db.supabase_client import get_supabase_client
 from repositories.interaction_repository import LeadInteractionRepository
 from repositories.lead_repository import LeadRepository
+from repositories.post_repository import PostRepository
 from repositories.property_repository import PropertyRepository
 from schemas.interaction import LeadInteractionCreate
 from schemas.lead import LeadCreate, LeadUpdate
@@ -17,14 +18,15 @@ class LeadService:
         self.lead_repo = LeadRepository(supabase)
         self.property_repo = PropertyRepository(supabase)
         self.interaction_repo = LeadInteractionRepository(supabase)
+        self.post_repo = PostRepository(supabase)
 
-    def _resolve_agency(self, current_user, requested_agency_id: Optional[int]) -> Optional[int]:
-        if current_user.get("is_superuser") and requested_agency_id:
-            return requested_agency_id
-        return requested_agency_id or current_user.get("agency_id")
-
-    def _agency_scope(self, current_user) -> Optional[int]:
-        return None if current_user.get("is_superuser") else current_user.get("agency_id")
+    def _scope(self, current_user):
+        if current_user.get("is_superuser"):
+            return {"agency_id": None, "user_id": None}
+        agency_id = current_user.get("agency_id")
+        if agency_id:
+            return {"agency_id": agency_id, "user_id": None}
+        return {"agency_id": None, "user_id": current_user.get("id")}
 
     def _recalculate(self, lead_dict: dict):
         properties = self.property_repo.list(lead_dict.get("agency_id"))
@@ -41,12 +43,19 @@ class LeadService:
         lead_dict["category"] = getattr(category, "value", category)
 
     def create_lead(self, lead_in: LeadCreate, current_user) -> dict:
-        agency_id = self._resolve_agency(current_user, lead_in.agency_id)
+        if not lead_in.post_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="post_id is required")
+
+        post = self.post_repo.get(lead_in.post_id)
+        if not post:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+        agency_id = post.get("company_id") or post.get("agency_id")
         if not agency_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Agency is required for lead")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Post missing agency/company")
 
         lead_payload = {
             "agency_id": agency_id,
+            "user_id": current_user.get("id"),
             "full_name": lead_in.full_name,
             "email": lead_in.email,
             "phone": lead_in.phone,
@@ -55,18 +64,25 @@ class LeadService:
             "urgency": getattr(lead_in.urgency, "value", lead_in.urgency),
             "notes": lead_in.notes,
             "status": "new",
+            "post_id": lead_in.post_id,
         }
         self._recalculate(lead_payload)
         return self.lead_repo.create(lead_payload)
 
     def update_lead(self, lead_id: int, lead_in: LeadUpdate, current_user) -> dict:
-        lead = self.lead_repo.get(lead_id, self._agency_scope(current_user))
+        scope = self._scope(current_user)
+        lead = self.lead_repo.get(lead_id, scope["agency_id"], scope["user_id"])
         if not lead:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
         updates = lead_in.dict(exclude_unset=True)
         if "urgency" in updates and hasattr(updates["urgency"], "value"):
             updates["urgency"] = updates["urgency"].value
+        if "post_id" in updates and updates["post_id"]:
+            post = self.post_repo.get(updates["post_id"])
+            if not post:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+            updates["agency_id"] = post.get("company_id") or post.get("agency_id")
         merged = {**lead, **updates}
         if any(field in updates for field in ["preferred_area", "budget", "urgency"]):
             self._recalculate(merged)
@@ -74,17 +90,20 @@ class LeadService:
         return self.lead_repo.update(lead_id, updates)
 
     def list_leads(self, current_user):
-        return self.lead_repo.list(self._agency_scope(current_user))
+        scope = self._scope(current_user)
+        return self.lead_repo.list(scope["agency_id"], scope["user_id"])
 
     def get_lead(self, lead_id: int, current_user):
-        lead = self.lead_repo.get(lead_id, self._agency_scope(current_user))
+        scope = self._scope(current_user)
+        lead = self.lead_repo.get(lead_id, scope["agency_id"], scope["user_id"])
         if not lead:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
         lead["interactions"] = self.interaction_repo.list_by_lead(lead_id)
         return lead
 
     def delete_lead(self, lead_id: int, current_user):
-        lead = self.lead_repo.get(lead_id, self._agency_scope(current_user))
+        scope = self._scope(current_user)
+        lead = self.lead_repo.get(lead_id, scope["agency_id"], scope["user_id"])
         if not lead:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
         self.lead_repo.delete(lead_id)

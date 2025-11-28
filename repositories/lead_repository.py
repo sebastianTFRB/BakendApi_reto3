@@ -4,17 +4,21 @@ from repositories.base import BaseRepository
 
 
 class LeadRepository(BaseRepository):
-    def get(self, lead_id: int, agency_id: Optional[int]) -> Optional[Dict[str, Any]]:
+    def get(self, lead_id: int, agency_id: Optional[int], user_id: Optional[int]) -> Optional[Dict[str, Any]]:
         query = self.supabase.table("leads").select("*").eq("id", lead_id)
         if agency_id is not None:
             query = query.eq("agency_id", agency_id)
+        if user_id is not None:
+            query = query.eq("user_id", user_id)
         resp = query.execute()
         return resp.data[0] if resp.data else None
 
-    def list(self, agency_id: Optional[int]) -> List[Dict[str, Any]]:
+    def list(self, agency_id: Optional[int], user_id: Optional[int]) -> List[Dict[str, Any]]:
         query = self.supabase.table("leads").select("*").order("created_at", desc=True)
         if agency_id is not None:
             query = query.eq("agency_id", agency_id)
+        if user_id is not None:
+            query = query.eq("user_id", user_id)
         resp = query.execute()
         return resp.data or []
 
