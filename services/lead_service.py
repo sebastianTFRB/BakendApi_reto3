@@ -1,9 +1,8 @@
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
 
-from models.lead import Lead
+from db.supabase_client import get_supabase_client
 from repositories.interaction_repository import LeadInteractionRepository
 from repositories.lead_repository import LeadRepository
 from repositories.property_repository import PropertyRepository
@@ -13,64 +12,66 @@ from utils.scoring import calculate_intent_score
 
 
 class LeadService:
-    def __init__(self, db: Session):
-        self.db = db
-        self.lead_repo = LeadRepository(db)
-        self.property_repo = PropertyRepository(db)
-        self.interaction_repo = LeadInteractionRepository(db)
+    def __init__(self):
+        supabase = get_supabase_client()
+        self.lead_repo = LeadRepository(supabase)
+        self.property_repo = PropertyRepository(supabase)
+        self.interaction_repo = LeadInteractionRepository(supabase)
 
     def _resolve_agency(self, current_user, requested_agency_id: Optional[int]) -> Optional[int]:
-        if getattr(current_user, "is_superuser", False) and requested_agency_id:
+        if current_user.get("is_superuser") and requested_agency_id:
             return requested_agency_id
-        return requested_agency_id or getattr(current_user, "agency_id", None)
+        return requested_agency_id or current_user.get("agency_id")
 
     def _agency_scope(self, current_user) -> Optional[int]:
-        return None if getattr(current_user, "is_superuser", False) else getattr(current_user, "agency_id", None)
+        return None if current_user.get("is_superuser") else current_user.get("agency_id")
 
-    def _recalculate(self, lead: Lead):
-        properties = self.property_repo.list(lead.agency_id)
+    def _recalculate(self, lead_dict: dict):
+        properties = self.property_repo.list(lead_dict.get("agency_id"))
+        urgency_val = lead_dict.get("urgency")
+        if hasattr(urgency_val, "value"):
+            urgency_val = urgency_val.value
         score, category = calculate_intent_score(
-            lead.preferred_area,
-            float(lead.budget) if lead.budget else None,
-            lead.urgency,
+            lead_dict.get("preferred_area"),
+            float(lead_dict.get("budget")) if lead_dict.get("budget") else None,
+            urgency_val,
             properties,
         )
-        lead.intent_score = score
-        lead.category = category
+        lead_dict["intent_score"] = score
+        lead_dict["category"] = getattr(category, "value", category)
 
-    def create_lead(self, lead_in: LeadCreate, current_user) -> Lead:
+    def create_lead(self, lead_in: LeadCreate, current_user) -> dict:
         agency_id = self._resolve_agency(current_user, lead_in.agency_id)
         if not agency_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Agency is required for lead")
 
-        lead = Lead(
-            agency_id=agency_id,
-            full_name=lead_in.full_name,
-            email=lead_in.email,
-            phone=lead_in.phone,
-            preferred_area=lead_in.preferred_area,
-            budget=lead_in.budget,
-            urgency=lead_in.urgency,
-            notes=lead_in.notes,
-        )
-        self._recalculate(lead)
-        return self.lead_repo.create(lead)
+        lead_payload = {
+            "agency_id": agency_id,
+            "full_name": lead_in.full_name,
+            "email": lead_in.email,
+            "phone": lead_in.phone,
+            "preferred_area": lead_in.preferred_area,
+            "budget": lead_in.budget,
+            "urgency": getattr(lead_in.urgency, "value", lead_in.urgency),
+            "notes": lead_in.notes,
+            "status": "new",
+        }
+        self._recalculate(lead_payload)
+        return self.lead_repo.create(lead_payload)
 
-    def update_lead(self, lead_id: int, lead_in: LeadUpdate, current_user) -> Lead:
+    def update_lead(self, lead_id: int, lead_in: LeadUpdate, current_user) -> dict:
         lead = self.lead_repo.get(lead_id, self._agency_scope(current_user))
         if not lead:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
-        updatable_fields = lead_in.dict(exclude_unset=True)
-        for field, value in updatable_fields.items():
-            setattr(lead, field, value)
-
-        if any(field in updatable_fields for field in ["preferred_area", "budget", "urgency"]):
-            self._recalculate(lead)
-
-        self.db.commit()
-        self.db.refresh(lead)
-        return lead
+        updates = lead_in.dict(exclude_unset=True)
+        if "urgency" in updates and hasattr(updates["urgency"], "value"):
+            updates["urgency"] = updates["urgency"].value
+        merged = {**lead, **updates}
+        if any(field in updates for field in ["preferred_area", "budget", "urgency"]):
+            self._recalculate(merged)
+        updates.update({"intent_score": merged.get("intent_score"), "category": merged.get("category")})
+        return self.lead_repo.update(lead_id, updates)
 
     def list_leads(self, current_user):
         return self.lead_repo.list(self._agency_scope(current_user))
@@ -79,22 +80,21 @@ class LeadService:
         lead = self.lead_repo.get(lead_id, self._agency_scope(current_user))
         if not lead:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        lead["interactions"] = self.interaction_repo.list_by_lead(lead_id)
         return lead
 
     def delete_lead(self, lead_id: int, current_user):
         lead = self.lead_repo.get(lead_id, self._agency_scope(current_user))
         if not lead:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
-        self.lead_repo.delete(lead)
+        self.lead_repo.delete(lead_id)
 
     def add_interaction(self, lead_id: int, interaction_in: LeadInteractionCreate, current_user):
         lead = self.get_lead(lead_id, current_user)
-        from models.interaction import LeadInteraction
-
-        interaction = LeadInteraction(
-            lead_id=lead.id,
-            channel=interaction_in.channel,
-            direction=interaction_in.direction,
-            message=interaction_in.message,
-        )
-        return self.interaction_repo.create(interaction)
+        payload = {
+            "lead_id": lead_id,
+            "channel": interaction_in.channel,
+            "direction": interaction_in.direction,
+            "message": interaction_in.message,
+        }
+        return self.interaction_repo.create(payload)

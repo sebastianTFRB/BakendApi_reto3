@@ -1,23 +1,31 @@
-from typing import Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
-from models.lead import LeadCategory, LeadUrgency
-from models.property import Property
+from core.domain import LeadCategory, LeadUrgency
 
 
-def calculate_intent_score(preferred_area: Optional[str], budget: Optional[float], urgency: LeadUrgency, properties: Iterable[Property]) -> Tuple[float, LeadCategory]:
+def calculate_intent_score(preferred_area: Optional[str], budget: Optional[float], urgency: Any, properties: Iterable[Any]) -> Tuple[float, LeadCategory]:
     score = 0.0
 
-    urgency_weight = {LeadUrgency.high: 40, LeadUrgency.medium: 25, LeadUrgency.low: 10}
-    score += urgency_weight.get(urgency, 0)
+    urgency_key = urgency.value if hasattr(urgency, "value") else urgency
+    urgency_weight = {LeadUrgency.high.value: 40, LeadUrgency.medium.value: 25, LeadUrgency.low.value: 10}
+    score += urgency_weight.get(urgency_key, 0)
 
     matched_area = False
     matched_budget = False
     for prop in properties:
-        if preferred_area and prop.area and preferred_area.lower() in prop.area.lower():
+        area_val = None
+        if isinstance(prop, dict):
+            area_val = prop.get("area")
+            price_val = prop.get("price")
+        else:
+            area_val = getattr(prop, "area", None)
+            price_val = getattr(prop, "price", None)
+
+        if preferred_area and area_val and preferred_area.lower() in str(area_val).lower():
             matched_area = True
             score += 15
-        if budget and prop.price:
-            diff = abs(float(prop.price) - budget)
+        if budget and price_val:
+            diff = abs(float(price_val) - budget)
             tolerance = max(budget * 0.15, 1)
             if diff <= tolerance:
                 matched_budget = True

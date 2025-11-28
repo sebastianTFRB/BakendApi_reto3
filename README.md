@@ -10,14 +10,13 @@ FastAPI backend for qualifying real-estate leads with JWT auth, lead scoring, pr
    ```
 3. Configure environment in `.env` (Supabase-only, required):
    ```bash
-   DATABASE_URL=postgresql+psycopg2://<supabase-user>:<supabase-password>@<host>:5432/postgres
    SECRET_KEY=change-me
    ACCESS_TOKEN_EXPIRE_MINUTES=1440
    JWT_ALGORITHM=HS256
    SUPABASE_URL=your-supabase-url
    SUPABASE_KEY=service-role-or-secret
-SUPABASE_BUCKET=posts
-```
+   SUPABASE_BUCKET=posts
+   ```
 
 ## Run
 ```bash
@@ -39,9 +38,8 @@ alembic upgrade head
 
 ## Folder Layout
 - `core/`: settings, security, JWT helpers
-- `db/`: SQLAlchemy Base/session (uses Supabase Postgres via `DATABASE_URL`)
-- `db/supabase_client.py`: Supabase client factory
-- `models/`: ORM entities
+- `db/`: Supabase client factory (`supabase_client.py`)
+- `models/`: removed (Supabase-native storage)
 - `schemas/`: Pydantic models
 - `repositories/`: CRUD abstractions
 - `services/`: business logic (lead scoring, Supabase posts)

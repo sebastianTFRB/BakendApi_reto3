@@ -1,12 +1,11 @@
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 
 
 class UserBase(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
-    agency_id: Optional[int] = None
 
 
 class UserCreate(UserBase):
@@ -18,5 +17,4 @@ class UserRead(UserBase):
     is_active: bool
     is_superuser: bool
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)

@@ -5,12 +5,11 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy.orm import Session
 
 from core.config import settings
-from db.session import get_db
+from db.supabase_client import get_supabase_client
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -29,7 +28,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 
-def get_current_user(request: Request, db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)):
+def get_current_user(request: Request, token: str = Depends(oauth2_scheme)):
     from repositories.user_repository import UserRepository
 
     credentials_exception = HTTPException(
@@ -47,14 +46,15 @@ def get_current_user(request: Request, db: Session = Depends(get_db), token: str
     except JWTError:
         raise credentials_exception
 
-    user_repo = UserRepository(db)
+    supabase = get_supabase_client()
+    user_repo = UserRepository(supabase)
     user = user_repo.get(int(user_id))
-    if user is None or not user.is_active:
+    if user is None or not user.get("is_active", False):
         raise credentials_exception
     return user
 
 
-def get_current_active_user(current_user = Depends(get_current_user)):
-    if not current_user.is_active:
+def get_current_active_user(current_user=Depends(get_current_user)):
+    if not current_user.get("is_active", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user

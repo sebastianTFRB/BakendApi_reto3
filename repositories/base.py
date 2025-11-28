@@ -1,12 +1,6 @@
-from sqlalchemy.orm import Session
+from supabase import Client
 
 
 class BaseRepository:
-    def __init__(self, db: Session):
-        self.db = db
-
-    def save(self, instance):
-        self.db.add(instance)
-        self.db.commit()
-        self.db.refresh(instance)
-        return instance
+    def __init__(self, supabase: Client):
+        self.supabase = supabase

@@ -1,35 +1,30 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from models.property import Property
 from repositories.base import BaseRepository
 
 
 class PropertyRepository(BaseRepository):
-    def get(self, property_id: int, agency_id: Optional[int]) -> Optional[Property]:
-        query = self.db.query(Property).filter(Property.id == property_id)
+    def get(self, property_id: int, agency_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        query = self.supabase.table("properties").select("*").eq("id", property_id)
         if agency_id is not None:
-            query = query.filter(Property.agency_id == agency_id)
-        return query.first()
+            query = query.eq("agency_id", agency_id)
+        resp = query.execute()
+        return resp.data[0] if resp.data else None
 
-    def list(self, agency_id: Optional[int]) -> List[Property]:
-        query = self.db.query(Property)
+    def list(self, agency_id: Optional[int]) -> List[Dict[str, Any]]:
+        query = self.supabase.table("properties").select("*").order("created_at", desc=True)
         if agency_id is not None:
-            query = query.filter(Property.agency_id == agency_id)
-        return query.order_by(Property.created_at.desc()).all()
+            query = query.eq("agency_id", agency_id)
+        resp = query.execute()
+        return resp.data or []
 
-    def create(self, property_obj: Property) -> Property:
-        self.db.add(property_obj)
-        self.db.commit()
-        self.db.refresh(property_obj)
-        return property_obj
+    def create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        resp = self.supabase.table("properties").insert(payload).execute()
+        return resp.data[0]
 
-    def update(self, property_obj: Property, **kwargs) -> Property:
-        for field, value in kwargs.items():
-            setattr(property_obj, field, value)
-        self.db.commit()
-        self.db.refresh(property_obj)
-        return property_obj
+    def update(self, property_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        resp = self.supabase.table("properties").update(payload).eq("id", property_id).execute()
+        return resp.data[0]
 
-    def delete(self, property_obj: Property) -> None:
-        self.db.delete(property_obj)
-        self.db.commit()
+    def delete(self, property_id: int) -> None:
+        self.supabase.table("properties").delete().eq("id", property_id).execute()

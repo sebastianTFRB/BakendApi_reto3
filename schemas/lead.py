@@ -1,9 +1,9 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from models.lead import LeadCategory, LeadUrgency
+from core.domain import LeadCategory, LeadUrgency
 from schemas.interaction import LeadInteractionRead
 
 
@@ -43,5 +43,4 @@ class LeadRead(LeadBase):
     updated_at: datetime
     interactions: List[LeadInteractionRead] = Field(default_factory=list)
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)

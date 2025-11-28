@@ -6,8 +6,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     project_name: str = "Lead Agent API"
     debug: bool = False
-    # Supabase Postgres connection string is required (no SQLite fallback)
-    database_url: str = Field(..., env="DATABASE_URL")
     secret_key: str = Field("super-secret-key", env="SECRET_KEY")
     access_token_expire_minutes: int = Field(60 * 24, env="ACCESS_TOKEN_EXPIRE_MINUTES")
     algorithm: str = Field("HS256", env="JWT_ALGORITHM")

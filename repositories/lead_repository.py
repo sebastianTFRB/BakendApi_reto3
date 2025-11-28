@@ -1,37 +1,30 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy.orm import Session
-
-from models.lead import Lead
 from repositories.base import BaseRepository
 
 
 class LeadRepository(BaseRepository):
-    def get(self, lead_id: int, agency_id: Optional[int]) -> Optional[Lead]:
-        query = self.db.query(Lead).filter(Lead.id == lead_id)
+    def get(self, lead_id: int, agency_id: Optional[int]) -> Optional[Dict[str, Any]]:
+        query = self.supabase.table("leads").select("*").eq("id", lead_id)
         if agency_id is not None:
-            query = query.filter(Lead.agency_id == agency_id)
-        return query.first()
+            query = query.eq("agency_id", agency_id)
+        resp = query.execute()
+        return resp.data[0] if resp.data else None
 
-    def list(self, agency_id: Optional[int]) -> List[Lead]:
-        query = self.db.query(Lead)
+    def list(self, agency_id: Optional[int]) -> List[Dict[str, Any]]:
+        query = self.supabase.table("leads").select("*").order("created_at", desc=True)
         if agency_id is not None:
-            query = query.filter(Lead.agency_id == agency_id)
-        return query.order_by(Lead.created_at.desc()).all()
+            query = query.eq("agency_id", agency_id)
+        resp = query.execute()
+        return resp.data or []
 
-    def create(self, lead: Lead) -> Lead:
-        self.db.add(lead)
-        self.db.commit()
-        self.db.refresh(lead)
-        return lead
+    def create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        resp = self.supabase.table("leads").insert(payload).execute()
+        return resp.data[0]
 
-    def update(self, lead: Lead, **kwargs) -> Lead:
-        for field, value in kwargs.items():
-            setattr(lead, field, value)
-        self.db.commit()
-        self.db.refresh(lead)
-        return lead
+    def update(self, lead_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+        resp = self.supabase.table("leads").update(payload).eq("id", lead_id).execute()
+        return resp.data[0]
 
-    def delete(self, lead: Lead) -> None:
-        self.db.delete(lead)
-        self.db.commit()
+    def delete(self, lead_id: int) -> None:
+        self.supabase.table("leads").delete().eq("id", lead_id).execute()

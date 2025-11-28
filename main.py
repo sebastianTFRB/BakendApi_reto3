@@ -5,7 +5,6 @@ from api import agencies, auth, leads, posts, properties
 from api.agente import agente as lead_agent
 from core.config import settings
 from core.middleware import TokenAuthMiddleware
-from db.session import Base, engine
 
 app = FastAPI(title=settings.project_name, debug=settings.debug)
 
@@ -17,11 +16,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(TokenAuthMiddleware)
-
-
-@app.on_event("startup")
-def startup_event():
-    Base.metadata.create_all(bind=engine)
 
 
 app.include_router(auth.router)

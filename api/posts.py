@@ -2,7 +2,6 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
-from sqlalchemy.orm import Session
 
 from core.security import get_current_user
 from schemas.post import PostRead
@@ -20,7 +19,7 @@ def create_post(
     current_user=Depends(get_current_user),
 ):
     service = PostService()
-    company_id = getattr(current_user, "agency_id", None)
+    company_id = current_user.get("agency_id")
     return service.create_post(title, description, photos or [], videos or [], company_id)
 
 
@@ -46,7 +45,7 @@ def update_post(
     current_user=Depends(get_current_user),
 ):
     service = PostService()
-    company_id = getattr(current_user, "agency_id", None)
+    company_id = current_user.get("agency_id")
     metadata = {"title": title, "description": description}
     return service.update_post(str(post_id), metadata, photos or [], videos or [], company_id)
 
@@ -54,6 +53,6 @@ def update_post(
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(post_id: UUID, current_user=Depends(get_current_user)):
     service = PostService()
-    company_id = getattr(current_user, "agency_id", None)
+    company_id = current_user.get("agency_id")
     service.delete_post(str(post_id), company_id)
     return None
