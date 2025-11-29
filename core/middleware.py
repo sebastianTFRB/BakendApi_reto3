@@ -25,6 +25,8 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             "/docs",
             "/openapi.json",
             "/health",
+            "/api/chatbot",
+
         ),
     ):
         super().__init__(app)
