@@ -9,6 +9,7 @@ from repositories.property_repository import PropertyRepository
 from schemas.property import PropertyCreate, PropertyUpdate
 from core.config import settings
 from utils.media import generate_object_path, validate_media
+from services.social_publisher import SocialPublisher
 
 
 class PropertyService:
@@ -17,6 +18,7 @@ class PropertyService:
         self.property_repo = PropertyRepository(supabase)
         self.supabase = supabase
         self.bucket = settings.supabase_bucket
+        self.publisher = SocialPublisher()
 
     def _is_superadmin(self, current_user) -> bool:
         return resolve_role(current_user) == UserRole.superadmin.value
@@ -74,7 +76,9 @@ class PropertyService:
             "status": property_in.status,
             "photos": property_in.photos or [],
         }
-        return self.property_repo.create(payload)
+        created = self.property_repo.create(payload)
+        self.publisher.publish_property(created)
+        return created
 
     def create_property_with_media(
         self,

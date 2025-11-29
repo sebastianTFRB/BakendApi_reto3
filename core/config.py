@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     supabase_bucket: str = Field("posts", env="SUPABASE_BUCKET")
     llm_model: str = Field("gpt-4o-mini", env="LLM_MODEL")
     llm_temperature: float = Field(0.2, env="LLM_TEMPERATURE")
+    n8n_webhook_url: str | None = Field(None, env="N8N_WEBHOOK_URL")
 
     model_config = SettingsConfigDict(
         env_file=".env",
