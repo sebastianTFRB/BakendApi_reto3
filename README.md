@@ -28,6 +28,7 @@ uvicorn main:app --reload
 ## Auth
 - Register: `POST /api/auth/register`
 - Login: `POST /api/auth/login` (OAuth2 password flow). Use returned bearer token for protected routes.
+- Roles: JWT incluye `role` (`user`, `agency_admin`, `superadmin`) y `agency_id`. Registro web crea únicamente rol `user`. Operaciones de agencias y publicaciones requieren rol `agency_admin`/`superadmin`.
 
 ## Alembic
 Initialize DB metadata automatically on startup, or manage migrations:

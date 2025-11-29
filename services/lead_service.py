@@ -2,6 +2,8 @@ from typing import Optional
 
 from fastapi import HTTPException, status
 
+from core.domain import UserRole
+from core.security import resolve_role
 from db.supabase_client import get_supabase_client
 from repositories.interaction_repository import LeadInteractionRepository
 from repositories.lead_repository import LeadRepository
@@ -20,8 +22,11 @@ class LeadService:
         self.interaction_repo = LeadInteractionRepository(supabase)
         self.post_repo = PostRepository(supabase)
 
+    def _is_superadmin(self, current_user) -> bool:
+        return resolve_role(current_user) == UserRole.superadmin.value
+
     def _scope(self, current_user):
-        if current_user.get("is_superuser"):
+        if self._is_superadmin(current_user):
             return {"agency_id": None, "user_id": None}
         agency_id = current_user.get("agency_id")
         if agency_id:

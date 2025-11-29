@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from core.domain import UserRole
 from core.config import settings
 from db.supabase_client import get_supabase_client
 from repositories.user_repository import UserRepository
@@ -49,6 +50,10 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         user = UserRepository(supabase).get(int(user_id))
         if not user or not user.get("is_active", False):
             return JSONResponse(status_code=401, content={"detail": "User not found or inactive"})
+        if user.get("is_superuser"):
+            user["role"] = UserRole.superadmin.value
+        elif "role" not in user or not user.get("role"):
+            user["role"] = UserRole.user.value
         request.state.user = user
 
         return await call_next(request)

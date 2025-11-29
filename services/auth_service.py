@@ -1,6 +1,8 @@
 from fastapi import HTTPException, status
 
+from core.domain import UserRole
 from core.security import create_access_token, get_password_hash, verify_password
+from core.security import resolve_role
 from db.supabase_client import get_supabase_client
 from repositories.agency_repository import AgencyRepository
 from repositories.user_repository import UserRepository
@@ -22,10 +24,12 @@ class AuthService:
         payload = {
             "email": user_in.email,
             "full_name": user_in.full_name,
+            "phone": user_in.phone,
             "hashed_password": hashed,
             "agency_id": None,
             "is_active": True,
             "is_superuser": False,
+            "role": UserRole.user.value,
         }
         return self.user_repo.create(payload)
 
@@ -36,4 +40,12 @@ class AuthService:
         return user
 
     def create_login_token(self, user: dict) -> str:
-        return create_access_token({"sub": str(user["id"]), "email": user["email"]})
+        role = resolve_role(user)
+        return create_access_token(
+            {
+                "sub": str(user["id"]),
+                "email": user["email"],
+                "role": role,
+                "agency_id": user.get("agency_id"),
+            }
+        )

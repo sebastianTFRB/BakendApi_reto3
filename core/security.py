@@ -6,6 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
+from core.domain import UserRole
 from core.config import settings
 from db.supabase_client import get_supabase_client
 
@@ -51,6 +52,10 @@ def get_current_user(request: Request, token: str = Depends(oauth2_scheme)):
     user = user_repo.get(int(user_id))
     if user is None or not user.get("is_active", False):
         raise credentials_exception
+    if user.get("is_superuser"):
+        user["role"] = UserRole.superadmin.value
+    elif "role" not in user or not user.get("role"):
+        user["role"] = UserRole.user.value
     return user
 
 
@@ -58,3 +63,29 @@ def get_current_active_user(current_user=Depends(get_current_user)):
     if not current_user.get("is_active", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
+
+
+def resolve_role(user: dict) -> str:
+    if user.get("is_superuser"):
+        return UserRole.superadmin.value
+
+    role = user.get("role")
+    if hasattr(role, "value"):
+        role = role.value
+    if role:
+        return str(role)
+    return UserRole.user.value
+
+
+def require_roles(*roles):
+    allowed = {r.value if hasattr(r, "value") else str(r) for r in roles}
+
+    def dependency(current_user=Depends(get_current_user)):
+        user_role = resolve_role(current_user)
+        if user_role == UserRole.superadmin.value:
+            return current_user
+        if user_role not in allowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        return current_user
+
+    return dependency

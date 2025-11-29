@@ -11,3 +11,9 @@ class LeadCategory(str, enum.Enum):
     A = "A"
     B = "B"
     C = "C"
+
+
+class UserRole(str, enum.Enum):
+    user = "user"
+    agency_admin = "agency_admin"
+    superadmin = "superadmin"

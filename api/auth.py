@@ -1,10 +1,9 @@
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends
-from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 
-from core.security import get_current_user
+from core.security import get_current_user, resolve_role
 from schemas.token import Token
 from schemas.user import UserCreate, UserRead
 from services.auth_service import AuthService
@@ -28,7 +27,13 @@ def login(login: LoginRequest = Body(...)):
     service = AuthService()
     user = service.authenticate_user(login.email, login.password)
     token = service.create_login_token(user)
-    return Token(access_token=token)
+    role = resolve_role(user)
+    return Token(
+        access_token=token,
+        user_id=user["id"],
+        role=role,
+        agency_id=user.get("agency_id"),
+    )
 
 @router.get("/me", response_model=UserRead)
 def read_me(current_user=Depends(get_current_user)):
