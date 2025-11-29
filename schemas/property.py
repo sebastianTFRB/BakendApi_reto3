@@ -1,0 +1,44 @@
+from datetime import datetime
+from typing import Optional, List
+
+from pydantic import BaseModel, ConfigDict
+
+
+class PropertyBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    price: float
+    area: Optional[str] = None
+    location: Optional[str] = None
+    property_type: Optional[str] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[int] = None
+    parking: Optional[bool] = None
+    status: str = "available"
+    agency_id: Optional[int] = None
+    photos: Optional[List[str]] = None
+
+
+class PropertyCreate(PropertyBase):
+    pass
+
+
+class PropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    price: Optional[float] = None
+    area: Optional[str] = None
+    location: Optional[str] = None
+    property_type: Optional[str] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[int] = None
+    parking: Optional[bool] = None
+    status: Optional[str] = None
+    photos: Optional[List[str]] = None
+
+
+class PropertyRead(PropertyBase):
+    id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

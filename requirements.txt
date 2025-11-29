@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-jose[cryptography]
+passlib[argon2]
+supabase==2.6.0
+pydantic-settings
+email-validator
+langchain
+langchain-openai
+openai
+python-dotenv
+python-multipart
