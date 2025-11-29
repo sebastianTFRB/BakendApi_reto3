@@ -1,87 +1,137 @@
 """
-Lightweight in-memory analytics for processed leads.
-Keeps counters for lead_score, urgencia, tipo_propiedad, canal y zonas.
+Analytics service that pulls lead and interaction data from Supabase.
 """
 
-from collections import Counter
-from threading import Lock
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from db.supabase_client import get_supabase_client
+from repositories.interaction_repository import LeadInteractionRepository
+from repositories.lead_repository import LeadRepository
+from utils.scoring import interest_from_category
 
 
-class _AnalyticsStore:
+def _to_iso(dt: Optional[Any]) -> Optional[str]:
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        return dt.isoformat()
+    try:
+        return datetime.fromisoformat(str(dt)).isoformat()
+    except Exception:
+        return None
+
+
+class AnalyticsService:
     def __init__(self) -> None:
-        self.total_leads = 0
-        self.lead_score_counts: Counter[str] = Counter()
-        self.urgency_counts: Counter[str] = Counter()
-        self.property_counts: Counter[str] = Counter()
-        self.channel_counts: Counter[str] = Counter()
-        self.zone_counts: Counter[str] = Counter()
-        self._budget_sum = 0
-        self._budget_count = 0
-        self._lock = Lock()
+        supabase = get_supabase_client()
+        self.lead_repo = LeadRepository(supabase)
+        self.interaction_repo = LeadInteractionRepository(supabase)
 
-    def record(self, *, lead_data: Dict[str, Any], result: Dict[str, Any]) -> None:
-        """
-        Store the outcome of a lead analysis for analytics purposes.
-        """
-        with self._lock:
-            self.total_leads += 1
-            score = (result.get("lead_score") or "C").upper()
-            self.lead_score_counts[score] += 1
+    def _leads_in_scope(
+        self,
+        *,
+        agency_id: Optional[int],
+        channel: Optional[str],
+        from_date: Optional[str],
+        to_date: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        lead_ids: Optional[List[int]] = None
+        if channel:
+            interactions = self.interaction_repo.list_filtered(
+                channel=channel, from_date=from_date, to_date=to_date
+            )
+            lead_ids = list({int(item["lead_id"]) for item in interactions if item.get("lead_id") is not None})
+            if not lead_ids:
+                return []
+        return self.lead_repo.list_filtered(
+            agency_id=agency_id,
+            user_id=None,
+            lead_ids=lead_ids,
+            from_date=from_date,
+            to_date=to_date,
+        )
 
-            urg = (result.get("urgencia") or "media").lower()
-            self.urgency_counts[urg] += 1
+    def _channel_counts(
+        self, lead_ids: Iterable[int], from_date: Optional[str], to_date: Optional[str]
+    ) -> Tuple[Dict[str, int], Set[int]]:
+        lead_id_list = [int(lid) for lid in lead_ids if lid is not None]
+        if not lead_id_list:
+            return {}, set()
 
-            tprop = result.get("tipo_propiedad") or "desconocido"
-            self.property_counts[str(tprop)] += 1
+        interactions = self.interaction_repo.list_filtered(
+            lead_ids=lead_id_list, from_date=from_date, to_date=to_date
+        )
 
-            canal = (lead_data.get("canal") or "desconocido").lower()
-            self.channel_counts[canal] += 1
+        channel_by_lead: Dict[int, str] = {}
+        for item in interactions:
+            lead_id = item.get("lead_id")
+            if lead_id is None or lead_id in channel_by_lead:
+                continue
+            channel_by_lead[int(lead_id)] = (item.get("channel") or "unknown").lower()
 
-            zona = result.get("zona")
-            if zona:
-                self.zone_counts[str(zona)] += 1
+        counts: Dict[str, int] = {}
+        for channel in channel_by_lead.values():
+            counts[channel] = counts.get(channel, 0) + 1
 
-            presupuesto = result.get("presupuesto")
-            if isinstance(presupuesto, (int, float)):
-                self._budget_sum += int(presupuesto)
-                self._budget_count += 1
+        return counts, set(channel_by_lead.keys())
 
-    def summary(self) -> Dict[str, Any]:
-        """
-        Return a snapshot of the current analytics summary.
-        """
-        with self._lock:
-            avg_budget: Optional[int] = None
-            if self._budget_count:
-                avg_budget = int(self._budget_sum / self._budget_count)
+    def get_lead_summary(
+        self,
+        *,
+        agency_id: Optional[int] = None,
+        channel: Optional[str] = None,
+        from_date: Optional[Any] = None,
+        to_date: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        from_iso = _to_iso(from_date)
+        to_iso = _to_iso(to_date)
 
-            def _top(counter: Counter[str], limit: int = 5) -> List[Dict[str, Any]]:
-                return [{"zona": name, "count": count} for name, count in counter.most_common(limit)]
+        channel_filter = channel.lower() if channel else None
+        leads = self._leads_in_scope(
+            agency_id=agency_id, channel=channel_filter, from_date=from_iso, to_date=to_iso
+        )
 
-            return {
-                "total_leads": self.total_leads,
-                "lead_score_counts": dict(self.lead_score_counts),
-                "urgency_counts": dict(self.urgency_counts),
-                "tipo_propiedad_counts": dict(self.property_counts),
-                "canal_counts": dict(self.channel_counts),
-                "avg_presupuesto": avg_budget,
-                "top_zonas": _top(self.zone_counts),
-            }
+        by_score: Dict[str, int] = {"A": 0, "B": 0, "C": 0}
+        by_interest: Dict[str, int] = {"interested": 0, "not_interested": 0}
 
+        for lead in leads:
+            category = str(lead.get("category") or "C").upper()
+            if category not in by_score:
+                by_score[category] = 0
+            by_score[category] += 1
+            interested, _ = interest_from_category(category)
+            if interested:
+                by_interest["interested"] += 1
+            else:
+                by_interest["not_interested"] += 1
 
-_store = _AnalyticsStore()
+        lead_ids = {int(lead["id"]) for lead in leads if lead.get("id") is not None}
+        by_channel, leads_with_channel = self._channel_counts(lead_ids, from_iso, to_iso)
+        missing_channels = lead_ids - leads_with_channel
+        if missing_channels:
+            by_channel["unknown"] = by_channel.get("unknown", 0) + len(missing_channels)
 
+        return {
+            "total_leads": len(leads),
+            "by_score": by_score,
+            "by_interest": by_interest,
+            "by_channel": by_channel,
+        }
 
-def record_lead_event(lead_data: Dict[str, Any], result: Dict[str, Any]) -> None:
-    """
-    Public helper to record analytics event.
-    """
-    _store.record(lead_data=lead_data, result=result)
-
-
-def get_analytics_summary() -> Dict[str, Any]:
-    """
-    Retrieve current analytics summary.
-    """
-    return _store.summary()
+    def get_lead_summary_by_agency(
+        self,
+        agency_id: int,
+        *,
+        channel: Optional[str] = None,
+        from_date: Optional[Any] = None,
+        to_date: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        return self.get_lead_summary(
+            agency_id=agency_id,
+            channel=channel,
+            from_date=from_date,
+            to_date=to_date,
+        )

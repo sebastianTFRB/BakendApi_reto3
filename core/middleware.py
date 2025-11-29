@@ -18,6 +18,9 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         exclude_paths: Tuple[str, ...] = (
             "/api/auth",
             "/api/lead/analyze",
+            "/api/agent/analyze",
+            "/api/analytics/leads/summary",
+            "/api/analytics/leads/summary-by-agency",
             "/api/analytics/summary",
             "/docs",
             "/openapi.json",
@@ -29,6 +32,10 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+        # Permitir preflight CORS sin token
+        if request.method.upper() == "OPTIONS":
+            return await call_next(request)
+
         if any(path.startswith(prefix) for prefix in self.exclude_paths):
             return await call_next(request)
 

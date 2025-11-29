@@ -1,23 +1,33 @@
 """
-Lead analysis agent that uses LangChain + LLM to classify real-estate leads.
+Lead analysis agent that uses LangChain + LLM to classify real-estate leads and persist them.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+import re
+import logging
+from typing import Any, Dict, Optional, Tuple
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
 from core.config import settings
+from core.domain import LeadUrgency
+from db.supabase_client import get_supabase_client
+from repositories.interaction_repository import LeadInteractionRepository
+from repositories.lead_repository import LeadRepository
+from repositories.property_repository import PropertyRepository
 from services.agent.history import format_history, history_store
 from services.agent.prompts import BASE_PROMPT
+from utils.scoring import interest_from_category
 
 load_dotenv()
 
 MODEL_NAME = settings.llm_model
 TEMPERATURE = settings.llm_temperature
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_RESPONSE: Dict[str, Any] = {
     "presupuesto": None,
@@ -25,8 +35,17 @@ DEFAULT_RESPONSE: Dict[str, Any] = {
     "tipo_propiedad": None,
     "urgencia": "media",
     "lead_score": "C",
+    "intencion_real": None,
     "razonamiento": "No se pudo interpretar bien el mensaje",
+    "is_interested": False,
+    "interest_level": "LOW",
 }
+
+
+def _get_value(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 
 def _build_agent_summary(result: Dict[str, Any]) -> str:
@@ -80,6 +99,10 @@ def _parse_json_response(content: str) -> Dict[str, Any]:
         if fence_index != -1:
             cleaned = cleaned[fence_index:]
 
+    # Some models return double braces {{ ... }}; trim one layer.
+    if cleaned.startswith("{{") and cleaned.endswith("}}"):
+        cleaned = cleaned[1:-1].strip()
+
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
@@ -120,6 +143,10 @@ def _normalize_tipo_propiedad(value: Any) -> Optional[str]:
             return "local"
         if v in {"lote", "terreno", "parcela"}:
             return "lote"
+        if v in {"oficina", "office"}:
+            return "oficina"
+        if v in {"finca", "granja"}:
+            return "finca"
         if v in {"otro", "otros", "other"}:
             return "otro"
         return "otro"
@@ -160,6 +187,7 @@ def _apply_rule_based_score(
     zona: Optional[str],
     tipo_propiedad: Optional[str],
     urgencia: str,
+    intencion_real: Optional[str],
 ) -> str:
     """
     Lightweight heuristics to reinforce LLM output.
@@ -169,8 +197,9 @@ def _apply_rule_based_score(
     has_property_type = bool(tipo_propiedad)
     high_intent = urgencia == "alta"
     medium_intent = urgencia == "media"
+    has_intention = bool(intencion_real)
 
-    if (has_budget and (has_location or has_property_type)) and (high_intent or medium_intent):
+    if (has_budget and (has_location or has_property_type) and has_intention) and (high_intent or medium_intent):
         return "A"
 
     if (has_budget and medium_intent) or (has_property_type and medium_intent):
@@ -185,6 +214,42 @@ def _apply_rule_based_score(
     return lead_score
 
 
+def _interest_flags(lead_score: str) -> Tuple[bool, str]:
+    interested, level = interest_from_category(lead_score)
+    return interested, level
+
+
+def _intent_score_from_result(result: Dict[str, Any]) -> float:
+    """
+    Provide a stable numeric intent score derived from the qualitative output.
+    """
+    base_map = {"A": 88.0, "B": 65.0, "C": 32.0}
+    score = base_map.get(result.get("lead_score"), 20.0)
+
+    urg = result.get("urgencia")
+    if urg == "alta":
+        score += 7
+    elif urg == "media":
+        score += 3
+
+    if result.get("presupuesto"):
+        score += 3
+    if result.get("zona"):
+        score += 2
+    if result.get("tipo_propiedad"):
+        score += 2
+
+    return max(0.0, min(score, 100.0))
+
+
+def _map_urgency_to_domain(urgencia: str) -> LeadUrgency:
+    if urgencia == "alta":
+        return LeadUrgency.high
+    if urgencia == "baja":
+        return LeadUrgency.low
+    return LeadUrgency.medium
+
+
 def _normalize_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     normalized: Dict[str, Any] = {
         "presupuesto": _normalize_presupuesto(data.get("presupuesto")),
@@ -192,6 +257,7 @@ def _normalize_payload(data: Dict[str, Any]) -> Dict[str, Any]:
         "tipo_propiedad": _normalize_tipo_propiedad(data.get("tipo_propiedad")),
         "urgencia": _normalize_urgencia(data.get("urgencia")),
         "lead_score": _normalize_lead_score(data.get("lead_score")),
+        "intencion_real": _normalize_text(data.get("intencion_real")),
         "razonamiento": _normalize_text(data.get("razonamiento"))
         or "Sin razonamiento proporcionado",
     }
@@ -202,7 +268,13 @@ def _normalize_payload(data: Dict[str, Any]) -> Dict[str, Any]:
         zona=normalized["zona"],
         tipo_propiedad=normalized["tipo_propiedad"],
         urgencia=normalized["urgencia"],
+        intencion_real=normalized["intencion_real"],
     )
+    interested, level = _interest_flags(normalized["lead_score"])
+    normalized["is_interested"] = interested
+    normalized["interest_level"] = level
+    normalized["intent_score"] = _intent_score_from_result(normalized)
+    normalized["urgency_value"] = _map_urgency_to_domain(normalized["urgencia"]).value
     return normalized
 
 
@@ -231,3 +303,243 @@ def analyze_lead_message(message: str, *, history_key: Optional[str] = None) -> 
     normalized = _normalize_payload(parsed)
     _persist_history(history_key, message, normalized)
     return normalized
+
+
+class LeadAgentService:
+    """
+    High-level orchestration: call the LLM agent, persist leads/interactions in Supabase,
+    and return a response that the API can expose.
+    """
+
+    def __init__(self) -> None:
+        supabase = get_supabase_client()
+        self.lead_repo = LeadRepository(supabase)
+        self.interaction_repo = LeadInteractionRepository(supabase)
+        self.property_repo = PropertyRepository(supabase)
+        self._fallback_recs_cache: Dict[str, Any] = {}
+
+    def _parse_contact(self, contact: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+        if not contact:
+            return None, None
+        contact = contact.strip()
+        if not contact:
+            return None, None
+        if "@" in contact:
+            return contact, None
+        digits = re.sub(r"[^\d+]", "", contact)
+        if not digits:
+            return None, None
+        if digits.startswith("+"):
+            return None, digits
+        return None, digits
+
+    def _choose_name(self, lead_data: Any, existing: Optional[Dict[str, Any]]) -> str:
+        name = _get_value(lead_data, "nombre") or (existing or {}).get("full_name")
+        if name:
+            return name
+        contact = _get_value(lead_data, "contacto")
+        if contact:
+            return str(contact)
+        return "Lead sin nombre"
+
+    def _build_notes(self, existing_notes: Optional[str], result: Dict[str, Any]) -> str:
+        details = []
+        if result.get("tipo_propiedad"):
+            details.append(f"tipo: {result['tipo_propiedad']}")
+        if result.get("zona"):
+            details.append(f"zona: {result['zona']}")
+        if result.get("intencion_real"):
+            details.append(f"intencion: {result['intencion_real']}")
+        summary = f"Agente -> score {result.get('lead_score')} ({result.get('razonamiento')})"
+        block = summary
+        if details:
+            block = f"{summary}; " + ", ".join(details)
+        if existing_notes and block not in existing_notes:
+            return f"{existing_notes}\n{block}"
+        return block if not existing_notes else existing_notes
+
+    def _build_lead_payload(
+        self,
+        lead_data: Any,
+        result: Dict[str, Any],
+        email: Optional[str],
+        phone: Optional[str],
+        existing: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        preferred_area = result.get("zona") or (existing or {}).get("preferred_area")
+        budget = result.get("presupuesto")
+        if budget is None and existing:
+            budget = existing.get("budget")
+
+        urgency_value = result.get("urgency_value") or _map_urgency_to_domain(result.get("urgencia", "media")).value
+
+        payload = {
+            "full_name": self._choose_name(lead_data, existing),
+            "email": email or (existing or {}).get("email"),
+            "phone": phone or (existing or {}).get("phone"),
+            "preferred_area": preferred_area,
+            "budget": budget,
+            "urgency": urgency_value,
+            "notes": self._build_notes((existing or {}).get("notes"), result),
+            "status": (existing or {}).get("status") or "new",
+            "category": result.get("lead_score"),
+            "intent_score": result.get("intent_score"),
+            "post_id": _get_value(lead_data, "post_id") or (existing or {}).get("post_id"),
+            "agency_id": _get_value(lead_data, "agency_id") or (existing or {}).get("agency_id"),
+        }
+
+        # Remove None values to avoid overwriting existing data with nulls.
+        return {k: v for k, v in payload.items() if v is not None}
+
+    def _find_existing_lead(
+        self, email: Optional[str], phone: Optional[str], agency_id: Optional[int]
+    ) -> Optional[Dict[str, Any]]:
+        if phone:
+            found = self.lead_repo.find_by_phone(phone, agency_id=agency_id)
+            if found:
+                return found
+        if email:
+            found = self.lead_repo.find_by_email(email, agency_id=agency_id)
+            if found:
+                return found
+        return None
+
+    def _record_interactions(self, lead_id: int, message: str, channel: str, result: Dict[str, Any]) -> None:
+        message_text = message if isinstance(message, str) else str(message)
+        if not message_text:
+            message_text = "mensaje vacio"
+
+        inbound = {
+            "lead_id": lead_id,
+            "channel": channel,
+            "direction": "inbound",
+            "message": message_text,
+        }
+        self.interaction_repo.create(inbound)
+
+        agent_message = _build_agent_summary(result)
+        outbound = {
+            "lead_id": lead_id,
+            "channel": channel,
+            "direction": "outbound",
+            "message": agent_message,
+        }
+        self.interaction_repo.create(outbound)
+
+    def _recommend_properties(self, result: Dict[str, Any], agency_id: Optional[int]) -> list[dict]:
+        try:
+            budget = _get_value(result, "presupuesto")
+            zona = _get_value(result, "zona")
+            tipo = _get_value(result, "tipo_propiedad")
+            parking = _get_value(result, "garaje")
+            bedrooms = _get_value(result, "habitaciones")
+            bathrooms = _get_value(result, "banos")
+
+            # Recuperar candidatos (puede ser de agencia o global)
+            props = self.property_repo.list_filtered(
+                agency_id=agency_id,
+                location=zona or None,
+                property_type=tipo or None,
+                min_price=budget * 0.5 if budget else None,
+                max_price=budget * 1.8 if budget else None,
+                bedrooms=bedrooms or None,
+                bathrooms=bathrooms or None,
+                parking=parking if isinstance(parking, bool) else None,
+            )
+            if not props:
+                cache_key = f"fallback_{agency_id}"
+                if cache_key in self._fallback_recs_cache:
+                    props = self._fallback_recs_cache[cache_key]
+                else:
+                    props = self.property_repo.list_filtered(agency_id=agency_id)[:10]
+                    self._fallback_recs_cache[cache_key] = props
+
+            def score_prop(p: dict) -> float:
+                score = 0.0
+                price = p.get("price")
+                if budget and price:
+                    diff_ratio = abs(float(price) - budget) / max(budget, 1)
+                    if diff_ratio <= 0.3:
+                        score += 40
+                    elif diff_ratio <= 0.6:
+                        score += 20
+                    else:
+                        return -1  # demasiado lejos del presupuesto
+                if zona and p.get("location") and zona.lower() in str(p.get("location")).lower():
+                    score += 15
+                if tipo and p.get("property_type") and tipo.lower() == str(p.get("property_type")).lower():
+                    score += 15
+                if bedrooms and p.get("bedrooms") is not None:
+                    if abs(int(p.get("bedrooms")) - bedrooms) <= 1:
+                        score += 8
+                if bathrooms and p.get("bathrooms") is not None:
+                    if abs(int(p.get("bathrooms")) - bathrooms) <= 1:
+                        score += 6
+                if isinstance(parking, bool) and p.get("parking") is not None and p.get("parking") == parking:
+                    score += 4
+                return score
+
+            ranked = []
+            for prop in props:
+                s = score_prop(prop)
+                if s >= 0:
+                    ranked.append((s, prop))
+            ranked.sort(key=lambda tup: tup[0], reverse=True)
+            top_props = [p for _, p in ranked[:5]]
+
+            return [
+                {
+                    "id": p.get("id"),
+                    "title": p.get("title"),
+                    "price": p.get("price"),
+                    "location": p.get("location"),
+                    "property_type": p.get("property_type"),
+                    "bedrooms": p.get("bedrooms"),
+                    "bathrooms": p.get("bathrooms"),
+                    "parking": p.get("parking"),
+                    "photos": p.get("photos"),
+                }
+                for p in top_props
+            ]
+        except Exception:
+            return []
+
+    def analyze_and_persist(self, lead_data: Any, *, history_key: Optional[str]) -> Dict[str, Any]:
+        message = _get_value(lead_data, "mensaje") or ""
+        channel = (_get_value(lead_data, "canal") or "web").lower()
+        result = analyze_lead_message(message, history_key=history_key)
+
+        # Ensure interest flags even if LLM was unavailable.
+        interested, level = _interest_flags(result.get("lead_score"))
+        result["is_interested"] = result.get("is_interested", interested)
+        result["interest_level"] = result.get("interest_level", level)
+        result["intent_score"] = result.get("intent_score") or _intent_score_from_result(result)
+
+        email, phone = self._parse_contact(_get_value(lead_data, "contacto"))
+        lead_record: Dict[str, Any] = {"id": None}
+
+        recs: list[dict] = []
+        try:
+            recs = self._recommend_properties(result, _get_value(lead_data, "agency_id"))
+            existing = self._find_existing_lead(email, phone, _get_value(lead_data, "agency_id"))
+            payload = self._build_lead_payload(lead_data, result, email, phone, existing)
+            if existing:
+                lead_record = self.lead_repo.update(existing["id"], payload)
+            else:
+                lead_record = self.lead_repo.create(payload)
+        except Exception as exc:
+            logger.error("Lead persistence failed: %s", exc, exc_info=True)
+            lead_record = {"id": None}
+
+        try:
+            if lead_record.get("id"):
+                self._record_interactions(lead_record["id"], message, channel, result)
+        except Exception as exc:
+            logger.error("Interaction logging failed: %s", exc, exc_info=True)
+            pass
+
+        return {
+            "lead_id": lead_record.get("id"),
+            **result,
+            "recommendations": recs,
+        }

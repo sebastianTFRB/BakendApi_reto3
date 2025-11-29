@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict
 
@@ -10,10 +10,13 @@ class PropertyBase(BaseModel):
     price: float
     area: Optional[str] = None
     location: Optional[str] = None
+    property_type: Optional[str] = None
     bedrooms: Optional[int] = None
     bathrooms: Optional[int] = None
+    parking: Optional[bool] = None
     status: str = "available"
     agency_id: Optional[int] = None
+    photos: Optional[List[str]] = None
 
 
 class PropertyCreate(PropertyBase):
@@ -26,9 +29,12 @@ class PropertyUpdate(BaseModel):
     price: Optional[float] = None
     area: Optional[str] = None
     location: Optional[str] = None
+    property_type: Optional[str] = None
     bedrooms: Optional[int] = None
     bathrooms: Optional[int] = None
+    parking: Optional[bool] = None
     status: Optional[str] = None
+    photos: Optional[List[str]] = None
 
 
 class PropertyRead(PropertyBase):

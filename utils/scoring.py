@@ -48,3 +48,15 @@ def calculate_intent_score(preferred_area: Optional[str], budget: Optional[float
         category = LeadCategory.C
 
     return score, category
+
+
+def interest_from_category(category: Any) -> Tuple[bool, str]:
+    """
+    Map a lead category to an interest flag and coarse level.
+    """
+    cat = str(category).upper() if category is not None else ""
+    if cat == LeadCategory.A.value:
+        return True, "HIGH"
+    if cat == LeadCategory.B.value:
+        return True, "MEDIUM"
+    return False, "LOW"

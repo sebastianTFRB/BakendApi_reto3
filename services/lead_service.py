@@ -12,6 +12,7 @@ from repositories.property_repository import PropertyRepository
 from schemas.interaction import LeadInteractionCreate
 from schemas.lead import LeadCreate, LeadUpdate
 from utils.scoring import calculate_intent_score
+import json
 
 
 class LeadService:
@@ -33,6 +34,21 @@ class LeadService:
             return {"agency_id": agency_id, "user_id": None}
         return {"agency_id": None, "user_id": current_user.get("id")}
 
+    def _parse_preferences(self, lead: dict):
+        """
+        Extrae preferencias persistidas como JSON en notes (compatibilidad con chatbot progresivo).
+        """
+        preferences = None
+        raw_notes = lead.get("notes")
+        if raw_notes:
+            try:
+                parsed = json.loads(raw_notes)
+                if isinstance(parsed, dict):
+                    preferences = parsed.get("preferences", parsed)
+            except Exception:
+                preferences = None
+        lead["preferences"] = preferences
+
     def _recalculate(self, lead_dict: dict):
         properties = self.property_repo.list(lead_dict.get("agency_id"))
         urgency_val = lead_dict.get("urgency")
@@ -48,15 +64,18 @@ class LeadService:
         lead_dict["category"] = getattr(category, "value", category)
 
     def create_lead(self, lead_in: LeadCreate, current_user) -> dict:
-        if not lead_in.post_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="post_id is required")
+        agency_id: Optional[int] = None
+        if lead_in.post_id:
+            post = self.post_repo.get(lead_in.post_id)
+            if not post:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+            agency_id = post.get("company_id") or post.get("agency_id")
 
-        post = self.post_repo.get(lead_in.post_id)
-        if not post:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
-        agency_id = post.get("company_id") or post.get("agency_id")
         if not agency_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Post missing agency/company")
+            agency_id = lead_in.agency_id or current_user.get("agency_id")
+
+        if not agency_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Se requiere agency_id para crear lead")
 
         lead_payload = {
             "agency_id": agency_id,
@@ -96,7 +115,10 @@ class LeadService:
 
     def list_leads(self, current_user):
         scope = self._scope(current_user)
-        return self.lead_repo.list(scope["agency_id"], scope["user_id"])
+        leads = self.lead_repo.list(scope["agency_id"], scope["user_id"])
+        for lead in leads:
+            self._parse_preferences(lead)
+        return leads
 
     def get_lead(self, lead_id: int, current_user):
         scope = self._scope(current_user)
@@ -104,6 +126,7 @@ class LeadService:
         if not lead:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
         lead["interactions"] = self.interaction_repo.list_by_lead(lead_id)
+        self._parse_preferences(lead)
         return lead
 
     def delete_lead(self, lead_id: int, current_user):

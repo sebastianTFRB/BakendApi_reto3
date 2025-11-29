@@ -13,28 +13,26 @@ Devuelve SIEMPRE este JSON:
 {{
   "presupuesto": <entero o null>,
   "zona": <string o null>,
-  "tipo_propiedad": <"apartamento" | "casa" | "local" | "lote" | "otro" | null>,
+  "tipo_propiedad": <"apartamento" | "casa" | "local" | "oficina" | "lote" | "finca" | "otro" | null>,
   "urgencia": <"alta" | "media" | "baja">,
   "lead_score": <"A" | "B" | "C">,
-  "razonamiento": <string corto explicando por qué>
+  "intencion_real": <string corto o null>,
+  "razonamiento": <string corto explicando por qué se asignó el score>
 }}
 
 Reglas:
 - presupuesto: número entero en moneda local, sin símbolos ni comas; null si no se sabe.
 - zona: ciudad/barrio si se menciona; null si no se sabe.
-- tipo_propiedad: normaliza a apartamento, casa, local, lote, otro; null si no se sabe.
-- urgencia: alta (quiere cerrar pronto, semanas o 1-3 meses, "ya", "urgente"), media (3-6 meses, sin apuro explícito), baja (sin intención clara, "solo mirando").
+- tipo_propiedad: normaliza a la lista dada; null si no se sabe.
+- urgencia: alta (cerrar pronto: semanas o 1-3 meses, dice "ya", "urgente"), media (3-6 meses, sin apuro explícito), baja (solo explorando, "algún día", sin presión).
 - lead_score:
-  - A: presupuesto realista + intención clara + urgencia alta o media + zona o ciudad definida.
-  - B: interés moderado, presupuesto algo bajo o dudoso, o falta de zona clara pero sí tipo de propiedad.
-  - C: muy poca claridad, curiosidad sin intención, presupuesto irreal o ausente, mensaje vago.
+  - A: presupuesto realista + intención clara de comprar/arrendar + urgencia alta o media + zona o ciudad definida.
+  - B: interés moderado, presupuesto algo bajo/dudoso, o falta de zona clara pero sí tipo de propiedad.
+  - C: poca claridad o curiosidad, sin presupuesto realista ni urgencia, mensaje muy vago.
+- No inventes datos: usa null cuando falte información.
+- Responde ÚNICAMENTE con el JSON, sin texto extra ni formato Markdown.
 
-Instrucciones:
-- Responde ÚNICAMENTE con el JSON, sin texto extra ni explicaciones.
-- Si algo no se puede extraer, usa null en lugar de inventar.
-- Usa los criterios anteriores para lead_score.
-
-Ejemplo 1
+Ejemplo 1 (lead A)
 Mensaje: "Busco apartamento en Pasto centro, tengo 400 millones, quiero cerrar en máximo 2 meses"
 Respuesta:
 {{
@@ -43,10 +41,11 @@ Respuesta:
   "tipo_propiedad": "apartamento",
   "urgencia": "alta",
   "lead_score": "A",
+  "intencion_real": "Quiere comprar pronto",
   "razonamiento": "Presupuesto alto, zona clara y urgencia alta"
 }}
 
-Ejemplo 2
+Ejemplo 2 (lead C)
 Mensaje: "Solo estoy mirando opciones baratas por curiosidad"
 Respuesta:
 {{
@@ -55,6 +54,7 @@ Respuesta:
   "tipo_propiedad": null,
   "urgencia": "baja",
   "lead_score": "C",
+  "intencion_real": "Curiosidad general",
   "razonamiento": "No hay intención clara de compra"
 }}
 

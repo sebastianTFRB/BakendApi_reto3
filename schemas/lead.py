@@ -16,6 +16,7 @@ class LeadBase(BaseModel):
     urgency: LeadUrgency = LeadUrgency.medium
     notes: Optional[str] = None
     post_id: Optional[str] = None
+    agency_id: Optional[int] = None
 
 
 class LeadCreate(LeadBase):
@@ -42,6 +43,7 @@ class LeadRead(LeadBase):
     intent_score: float
     category: LeadCategory
     status: str
+    preferences: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
     interactions: List[LeadInteractionRead] = Field(default_factory=list)
